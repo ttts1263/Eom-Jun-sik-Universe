@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>엄준식 유니버스 판별기</title>
+
+  <!-- TensorFlow.js + Teachable Machine Image -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8.5/dist/teachablemachine-image.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #101114;
+      color: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      padding: 32px 16px;
+    }
+
+    .app {
+      width: min(920px, 100%);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(30px, 5vw, 54px);
+      text-align: center;
+    }
+
+    .subtitle {
+      margin: 0 0 28px;
+      text-align: center;
+      color: #aeb3bd;
+    }
+
+    .panel {
+      background: #1a1c21;
+      border: 1px solid #2c3038;
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 16px 50px rgba(0,0,0,.35);
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    button, .file-button {
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      background: #f1f3f5;
+      color: #111318;
+      transition: transform .12s ease, opacity .12s ease;
+    }
+
+    button:hover, .file-button:hover { transform: translateY(-1px); }
+    button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    input[type="file"] { display: none; }
+
+    .stage {
+      width: min(520px, 100%);
+      aspect-ratio: 1 / 1;
+      margin: 0 auto;
+      border-radius: 18px;
+      overflow: hidden;
+      background: #090a0c;
+      border: 1px solid #30343d;
+      display: grid;
+      place-items: center;
+      position: relative;
+    }
+
+    #webcam-container,
+    #preview {
+      width: 100%;
+      height: 100%;
+    }
+
+    #webcam-container canvas,
+    #preview {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover;
+      display: block;
+    }
+
+    #preview { display: none; }
+
+    .placeholder {
+      color: #777e8b;
+      text-align: center;
+      padding: 24px;
+      line-height: 1.6;
+    }
+
+    .result {
+      margin-top: 24px;
+    }
+
+    .winner {
+      text-align: center;
+      padding: 18px;
+      border-radius: 16px;
+      background: #23262d;
+      border: 1px solid #343944;
+      margin-bottom: 16px;
+    }
+
+    .winner-label {
+      color: #9da4b0;
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    #top-class {
+      font-size: clamp(28px, 5vw, 44px);
+      font-weight: 900;
+      word-break: keep-all;
+    }
+
+    #top-percent {
+      color: #c8ccd3;
+      margin-top: 4px;
+      font-size: 18px;
+    }
+
+    .prediction-row {
+      display: grid;
+      grid-template-columns: 145px 1fr 62px;
+      gap: 10px;
+      align-items: center;
+      margin: 11px 0;
+    }
+
+    .class-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 700;
+    }
+
+    .bar-track {
+      height: 12px;
+      border-radius: 999px;
+      background: #30343d;
+      overflow: hidden;
+    }
+
+    .bar {
+      height: 100%;
+      width: 0%;
+      border-radius: inherit;
+      background: #f1f3f5;
+      transition: width .12s linear;
+    }
+
+    .percent {
+      text-align: right;
+      color: #c6cad1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #status {
+      min-height: 24px;
+      margin: 16px 0 0;
+      text-align: center;
+      color: #aeb3bd;
+    }
+
+    @media (max-width: 600px) {
+      .prediction-row {
+        grid-template-columns: 105px 1fr 52px;
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <h1>엄준식 유니버스 판별기</h1>
+    <p class="subtitle">사진 또는 웹캠을 넣으면 AI가 5개 클래스 중 하나를 판별합니다.</p>
+
+    <section class="panel">
+      <div class="controls">
+        <button id="webcam-start">웹캠 시작</button>
+        <button id="webcam-stop" disabled>웹캠 끄기</button>
+        <label class="file-button" for="image-input">이미지 선택</label>
+        <input id="image-input" type="file" accept="image/*" />
+      </div>
+
+      <div class="stage">
+        <div id="webcam-container"></div>
+        <img id="preview" alt="선택한 이미지 미리보기" />
+        <div id="placeholder" class="placeholder">
+          웹캠을 켜거나<br />이미지를 선택해 주세요.
+        </div>
+      </div>
+
+      <div class="result">
+        <div class="winner">
+          <div class="winner-label">현재 1위</div>
+          <div id="top-class">대기 중</div>
+          <div id="top-percent">-</div>
+        </div>
+        <div id="prediction-list"></div>
+      </div>
+
+      <p id="status">모델 불러오는 중...</p>
+    </section>
+  </main>
+
+  <script>
+    const MODEL_URL = "./model.json";
+    const METADATA_URL = "./metadata.json";
+
+    let model = null;
+    let webcam = null;
+    let webcamRunning = false;
+    let animationId = null;
+
+    const webcamContainer = document.getElementById("webcam-container");
+    const preview = document.getElementById("preview");
+    const placeholder = document.getElementById("placeholder");
+    const predictionList = document.getElementById("prediction-list");
+    const statusText = document.getElementById("status");
+    const topClass = document.getElementById("top-class");
+    const topPercent = document.getElementById("top-percent");
+    const startButton = document.getElementById("webcam-start");
+    const stopButton = document.getElementById("webcam-stop");
+    const imageInput = document.getElementById("image-input");
+
+    async function loadModel() {
+      try {
+        model = await tmImage.load(MODEL_URL, METADATA_URL);
+        buildPredictionRows(model.getClassLabels());
+        statusText.textContent = "모델 준비 완료. 사진이나 웹캠을 넣어봐!";
+      } catch (error) {
+        console.error(error);
+        statusText.textContent = "모델을 불러오지 못했습니다. 웹 서버로 실행했는지 확인해 주세요.";
+      }
+    }
+
+    function buildPredictionRows(labels) {
+      predictionList.innerHTML = "";
+
+      labels.forEach((label, index) => {
+        const row = document.createElement("div");
+        row.className = "prediction-row";
+        row.innerHTML = `
+          <div class="class-name" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+          <div class="bar-track"><div class="bar" id="bar-${index}"></div></div>
+          <div class="percent" id="percent-${index}">0.0%</div>
+        `;
+        predictionList.appendChild(row);
+      });
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    async function startWebcam() {
+      if (!model) {
+        statusText.textContent = "아직 모델을 불러오는 중입니다.";
+        return;
+      }
+
+      stopWebcam();
+      preview.style.display = "none";
+      placeholder.style.display = "none";
+      webcamContainer.innerHTML = "";
+
+      try {
+        const flip = true;
+        webcam = new tmImage.Webcam(500, 500, flip);
+        await webcam.setup();
+        await webcam.play();
+        webcamRunning = true;
+
+        webcamContainer.appendChild(webcam.canvas);
+        startButton.disabled = true;
+        stopButton.disabled = false;
+        statusText.textContent = "웹캠 판별 중...";
+
+        loop();
+      } catch (error) {
+        console.error(error);
+        statusText.textContent = "웹캠을 사용할 수 없습니다. 카메라 권한을 확인해 주세요.";
+        placeholder.style.display = "block";
+      }
+    }
+
+    function stopWebcam() {
+      webcamRunning = false;
+
+      if (animationId !== null) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+
+      if (webcam) {
+        webcam.stop();
+        webcam = null;
+      }
+
+      webcamContainer.innerHTML = "";
+      startButton.disabled = false;
+      stopButton.disabled = true;
+    }
+
+    async function loop() {
+      if (!webcamRunning || !webcam) return;
+
+      webcam.update();
+      await predict(webcam.canvas);
+      animationId = requestAnimationFrame(loop);
+    }
+
+    async function predict(source) {
+      if (!model) return;
+
+      try {
+        const predictions = await model.predict(source, false);
+        predictions.sort((a, b) => b.probability - a.probability);
+
+        topClass.textContent = predictions[0].className;
+        topPercent.textContent = `${(predictions[0].probability * 100).toFixed(1)}%`;
+
+        const originalOrder = model.getClassLabels();
+        predictions.forEach(item => {
+          const index = originalOrder.indexOf(item.className);
+          const percent = item.probability * 100;
+          document.getElementById(`bar-${index}`).style.width = `${percent}%`;
+          document.getElementById(`percent-${index}`).textContent = `${percent.toFixed(1)}%`;
+        });
+      } catch (error) {
+        console.error(error);
+        statusText.textContent = "판별 중 오류가 발생했습니다.";
+      }
+    }
+
+    imageInput.addEventListener("change", async event => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      if (!model) {
+        statusText.textContent = "아직 모델을 불러오는 중입니다.";
+        return;
+      }
+
+      stopWebcam();
+      webcamContainer.innerHTML = "";
+      placeholder.style.display = "none";
+
+      const objectUrl = URL.createObjectURL(file);
+      preview.onload = async () => {
+        await predict(preview);
+        statusText.textContent = "이미지 판별 완료.";
+        URL.revokeObjectURL(objectUrl);
+      };
+      preview.src = objectUrl;
+      preview.style.display = "block";
+    });
+
+    startButton.addEventListener("click", startWebcam);
+    stopButton.addEventListener("click", () => {
+      stopWebcam();
+      preview.style.display = "none";
+      placeholder.style.display = "block";
+      statusText.textContent = "웹캠을 껐습니다.";
+    });
+
+    window.addEventListener("beforeunload", stopWebcam);
+
+    loadModel();
+  </script>
+</body>
+</html>
